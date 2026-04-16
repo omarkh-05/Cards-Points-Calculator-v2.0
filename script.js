@@ -1,4 +1,4 @@
-/** * 1. CONFIGURATION MODULE */
+  /** * 1. CONFIGURATION */
     const CONFIG = {
         KINGDOM_VALUES: { 'latsh': -15, 'dinari': -10, 'banat': -25, 'sheikh': -75 },
         COMPLEX_OPTIONS: [
@@ -6,13 +6,13 @@
             { id: 'banat', name: 'بنات' }, { id: 'sheikh', name: 'شيخ كبة' }
         ],
         RANGE_LIMITS: {
-            'latsh': { min: -13, max: 13, sum: 13, minTotal: -13 },
-            'dinari': { min: -13, max: 13, sum: 13, minTotal: -13 },
-            'banat': { min: -8, max: 8, sum: 8, minTotal: -8 },
-            'sheikh': { min: -2, max: 2, sum: 2, minTotal: -2 },
-            'trix': { min: -4, max: 4, sum: 10, minTotal: -10 },
-            'tarneeb': { min: -26, max: 26, sum: 26, minTotal: -26 },
-            'hand': { min: -500, max: 500, sum: 1000, minTotal: -1000 }
+            'latsh': { min: -13, max: 13, sum: 13, minSum: 13, maxSum: 13 },
+            'dinari': { min: -13, max: 13, sum: 13, minSum: 13, maxSum: 13 },
+            'banat': { min: -8, max: 8, sum: 8, minSum: 4, maxSum: 8 },
+            'sheikh': { min: -2, max: 2, sum: 2, minSum: 1, maxSum: 2 },
+            'trix': { min: -4, max: 4, sum: 10, minSum: 10, maxSum: 10 },
+            'tarneeb': { min: -26, max: 26, sum: 26, minSum: -26, maxSum: 26 },
+            'hand': { min: -500, max: 500, sum: 1000, minSum: -1000, maxSum: 1000 }
         },
         INITIAL_KINGDOMS: {
             trix: [
@@ -33,7 +33,7 @@
     const DB_MODULE = {
         db: null,
         init() {
-            const request = indexedDB.open("ProCardGamesDB", 2);
+            const request = indexedDB.open("ShaddaPointsDB", 2);
             request.onupgradeneeded = (e) => {
                 this.db = e.target.result;
                 if (!this.db.objectStoreNames.contains("game_logs")) {
@@ -71,32 +71,22 @@
         validateSum(total, targetKey) {
             const lim = CONFIG.RANGE_LIMITS[targetKey];
             if (!lim) return { ok: true };
+            if (GAME_ENGINE.state.type === 'trix' || GAME_ENGINE.state.type === 'complex') {
+                if (total > lim.maxSum) return { ok: false, msg: `المجموع لا يمكن أن يتجاوز ${lim.maxSum}. المجموع الحالي: ${total}` };
+                if (total < lim.minSum) return { ok: false, msg: `المجموع لا يمكن أن يقل عن ${lim.minSum}. المجموع الحالي: ${total}` };
+                return { ok: true };
+            }
             if (total > lim.sum) return { ok: false, msg: `المجموع لا يمكن أن يتجاوز ${lim.sum}. المجموع الحالي: ${total}` };
-            if (total < lim.minTotal) return { ok: false, msg: `المجموع لا يمكن أن يقل عن ${lim.minTotal}. المجموع الحالي: ${total}` };
             return { ok: true };
         }
     };
 
     /** * 4. GAME ENGINE */
     const GAME_ENGINE = {
-        state: { 
-            type: '', 
-            title: '', 
-            mode: 'normal', 
-            players: [], 
-            roundActive: false, 
-            playedKingdoms: [] 
-        },
+        state: { type: '', title: '', mode: 'normal', players: [], roundActive: false, playedKingdoms: [] },
 
         initGame(type, title) {
-            this.state = { 
-                type, 
-                title, 
-                players: [], 
-                roundActive: false, 
-                mode: (type === 'tarneeb' ? 'team' : 'normal'),
-                playedKingdoms: [] 
-            };
+            this.state = { type, title, players: [], roundActive: false, mode: (type === 'tarneeb' ? 'team' : 'normal'), playedKingdoms: [] };
             UI_RENDERER.setupGameUI(title, type);
             this.setMode(this.state.mode, true);
             this.setupKingdoms();
@@ -108,14 +98,10 @@
         setupKingdoms() {
             const section = document.getElementById('kingdom-section');
             const select = document.getElementById('kingdom-select');
-            
             if (this.state.type === 'trix' || this.state.type === 'complex') {
                 section.style.display = 'block';
                 const initialList = CONFIG.INITIAL_KINGDOMS[this.state.type];
-                
-                const currentVal = select.value;
                 select.innerHTML = '';
-                
                 initialList.forEach(k => {
                     const isPlayed = this.state.playedKingdoms.includes(k.id);
                     const opt = document.createElement('option');
@@ -123,11 +109,23 @@
                     opt.innerText = isPlayed ? `${k.name} ✅` : k.name;
                     select.appendChild(opt);
                 });
-                
-                if (currentVal) select.value = currentVal;
-            } else {
-                section.style.display = 'none';
-            }
+            } else section.style.display = 'none';
+        },
+
+        resetGame() {
+            UI_RENDERER.showConfirmModal("إنهاء اللعبة الحالية؟", "سيتم حفظ النتيجة النهائية في السجل وتصفير كل شيء لتبدأ لعبة جديدة.", () => {
+                if (this.state.players.length > 0) {
+                    const sorted = [...this.state.players].sort((a,b) => b.score - a.score);
+                    DB_MODULE.saveGame(this.state.title, sorted[0].name, sorted[0].score);
+                }
+                this.state.players = [];
+                this.state.playedKingdoms = [];
+                this.state.roundActive = false;
+                this.setupKingdoms();
+                UI_RENDERER.updateRoundButton(false);
+                UI_RENDERER.renderPlayers();
+                UI_RENDERER.showSimpleModal("انتهت اللعبة! 🏁", "تم حفظ النتائج وتصفير اللوحة.");
+            });
         },
 
         addPlayer() {
@@ -142,6 +140,13 @@
 
         toggleRound() {
             if (this.state.players.length === 0) return UI_RENDERER.showSimpleModal("تنبيه ⚠️", "يرجى إضافة لاعبين قبل البدء.");
+            
+            // تصفير قائمة الاختيار (الصح) إذا كنا نفتح الجولة من جديد
+            if (!this.state.roundActive) {
+                this.state.playedKingdoms = [];
+                this.setupKingdoms();
+            }
+
             this.state.roundActive = !this.state.roundActive;
             UI_RENDERER.updateRoundButton(this.state.roundActive);
             UI_RENDERER.renderPlayers();
@@ -153,20 +158,14 @@
             const count = parseInt(input.value);
             const kType = kSelect.value;
             if (isNaN(count)) return;
-            
             const check = VALIDATOR.validateIndividual(count, kType);
             if (!check.ok) return UI_RENDERER.showSimpleModal("خطأ ❌", check.msg);
-            
             const player = this.state.players.find(x => x.id === pid);
             const change = count * CONFIG.KINGDOM_VALUES[kType];
             player.score += change; player.history.push(change);
-            
-            // إضافة الخيار الملعوب لبطاقة اللاعب
-            if (!player.usedComplexOptions.includes(kType)) {
-                player.usedComplexOptions.push(kType);
-            }
-            
+            if (!player.usedComplexOptions.includes(kType)) player.usedComplexOptions.push(kType);
             UI_RENDERER.renderPlayers();
+            input.value = ''; // مسح الإدخال بعد التسجيل
         },
 
         submitAllScores() {
@@ -175,22 +174,16 @@
             const kType = kingdomSelect?.value;
             let total = 0;
             const temp = [];
-
             for (let input of inputs) {
                 const val = parseInt(input.value) || 0;
-                total += val;
+                total += Math.abs(val);
                 temp.push({ pid: parseFloat(input.getAttribute('data-id')), val });
             }
-
+            
             const target = (this.state.type === 'hand') ? 'hand' : (kType === 'trix' ? 'trix' : kType);
             const sumCheck = VALIDATOR.validateSum(total, target);
             if (!sumCheck.ok) return UI_RENDERER.showSimpleModal("خطأ في المجموع!", sumCheck.msg);
-
-            for (let item of temp) {
-                const indCheck = VALIDATOR.validateIndividual(item.val, target);
-                if (!indCheck.ok) return UI_RENDERER.showSimpleModal("قيمة غير مسموحة!", indCheck.msg);
-            }
-
+            
             temp.forEach(item => {
                 const p = this.state.players.find(x => x.id === item.pid);
                 let change = item.val;
@@ -200,9 +193,7 @@
                         const rankVal = Math.abs(item.val);
                         change = {1:200, 2:150, 3:100, 4:50}[rankVal] || 0;
                         if (item.val < 0) change = -change;
-                    } else if (kObj?.val) {
-                        change = item.val * kObj.val;
-                    }
+                    } else if (kObj?.val) change = item.val * kObj.val;
                 }
                 p.score += change; p.history.push(change);
             });
@@ -210,21 +201,26 @@
             if (kType && !this.state.playedKingdoms.includes(kType)) {
                 this.state.playedKingdoms.push(kType);
             }
-
-            this.state.roundActive = false;
-            // لا نصفر usedComplexOptions للاعبين هنا لتمكينهم من رؤية ما لعبوه في المملكة الحالية
-            // يتم التصفير فقط عند بدء "جولة جديدة" لفتح مملكة جديدة تماماً
             
+            // لا نغلق roundActive ليبقى الإدخال مفتوحاً
             this.setupKingdoms();
-            UI_RENDERER.updateRoundButton(false);
             UI_RENDERER.renderPlayers();
-            UI_RENDERER.showSimpleModal("تم التثبيت ✅", "تم تسجيل النقاط بنجاح.");
+            UI_RENDERER.showSimpleModal("تم التثبيت ✅", "تم تسجيل النقاط. يمكنك اختيار مملكة أخرى أو تغييرها.");
+        },
+
+        remainingCalculated(pid) {
+            const p = this.state.players.find(x => x.id === pid);
+            const val = parseInt(document.getElementById(`in-${pid}`).value);
+            if (isNaN(val)) return;
+            p.score -= val;
+            p.history.push(-val);
+            UI_RENDERER.renderPlayers();
         },
 
         handleModeSwitch(newMode) {
             if (this.state.mode === newMode) return;
             if (this.state.players.length > 0) {
-                UI_RENDERER.showConfirmModal("تغيير النظام؟", "سيتم تصفير اللاعبين الحاليين. هل تود الاستمرار؟", () => this.setMode(newMode));
+                UI_RENDERER.showConfirmModal("تغيير النظام؟", "سيتم تصفير اللاعبين الحاليين.", () => this.setMode(newMode));
             } else this.setMode(newMode);
         },
 
@@ -235,26 +231,7 @@
             UI_RENDERER.renderPlayers();
         },
 
-        openTarneebCheatModal() {
-            const options = this.state.players.map(p => ({
-                label: p.name,
-                action: () => { p.score -= 5; p.history.push(-5); UI_RENDERER.closeModal(); UI_RENDERER.renderPlayers(); }
-            }));
-            UI_RENDERER.showSelectionModal("من الفريق الغشاش؟ 🕵️‍♂️", "سيتم خصم 5 نقاط فورية.", options);
-        },
-
-        confirmEndGame() {
-            UI_RENDERER.showConfirmModal("إغلاق اللعبة؟", "سيتم حفظ النتيجة النهائية في السجل والعودة للقائمة.", () => {
-                if (this.state.players.length > 0) {
-                    const sorted = [...this.state.players].sort((a,b) => b.score - a.score);
-                    DB_MODULE.saveGame(this.state.title, sorted[0].name, sorted[0].score);
-                }
-                UI_RENDERER.switchView('home');
-            });
-        },
-
         confirmExit() { UI_RENDERER.switchView('home'); },
-        
         showWinner() {
             if (!this.state.players.length) return;
             const winner = [...this.state.players].sort((a,b) => b.score - a.score)[0];
@@ -262,10 +239,9 @@
         }
     };
 
-    /** * 5. UI RENDERER MODULE */
+    /** * 5. UI RENDERER */
     const UI_RENDERER = {
         switchView(v) { document.querySelectorAll('.view').forEach(el => el.classList.remove('active')); document.getElementById(v + '-view').classList.add('active'); this.closeModal(); },
-        
         closeModal() { document.getElementById('modal').style.display = 'none'; },
 
         setupGameUI(title, type) {
@@ -274,21 +250,35 @@
             document.getElementById('tarneeb-cheat-btn').style.display = (type === 'tarneeb') ? 'block' : 'none';
         },
 
+        addCustomGame() {
+            const name = document.getElementById('custom-game-name-input').value.trim();
+            if (!name) return;
+            const container = document.getElementById('game-list-container');
+            const div = document.createElement('div');
+            div.className = 'game-item';
+            div.onclick = () => GAME_ENGINE.initGame('custom', name);
+            div.innerHTML = `<span>${name}</span><span>〉</span>`;
+            container.appendChild(div);
+            document.getElementById('custom-game-name-input').value = '';
+            this.switchView('select-game');
+        },
+
+        filterGames() {
+            const term = document.getElementById('game-search').value.toLowerCase();
+            document.querySelectorAll('#game-list-container .game-item').forEach(it => {
+                it.style.display = it.innerText.toLowerCase().includes(term) ? 'flex' : 'none';
+            });
+        },
+
         updateRoundButton(isActive) {
             const btn = document.getElementById('btn-round-control');
-            btn.innerText = isActive ? "أنهِ الجولة الحالية 🏁" : "ابدأ جولة جديدة 🚀";
+            btn.innerText = isActive ? "إنهاء المملكة 🔒" : "ابدأ المملكة 🚀";
             btn.className = isActive ? "btn-main btn-end-round" : "btn-main btn-start";
-            
-            // عند بدء جولة جديدة حقيقية (من زر ابدأ جولة جديدة)
-            if (isActive) {
-                // تصفير خيارات الكومبليكس داخل البطاقات لبدء مملكة جديدة
-                GAME_ENGINE.state.players.forEach(p => p.usedComplexOptions = []);
-            }
         },
 
         updateModeButtons(m) {
-            document.getElementById('mode-normal').classList.toggle('active', m === 'normal');
-            document.getElementById('mode-team').classList.toggle('active', m === 'team');
+            document.getElementById('mode-normal').style.background = m === 'normal' ? 'var(--primary-blue)' : '#2d3748';
+            document.getElementById('mode-team').style.background = m === 'team' ? 'var(--primary-blue)' : '#2d3748';
         },
 
         renderPlayers() {
@@ -301,29 +291,13 @@
             GAME_ENGINE.state.players.forEach(p => {
                 const card = document.createElement('div');
                 card.className = 'player-card';
-                let historyHtml = p.history.length > 0 
-                    ? p.history.map(h => `<span class="history-badge ${h >= 0 ? 'positive' : 'negative'}">${h >= 0 ? '+' : ''}${h}</span>`).join('')
-                    : '<span class="empty-history">لا جولات</span>';
-
+                let historyHtml = p.history.map(h => `<span class="history-badge ${h >= 0 ? 'positive' : 'negative'}">${h >= 0 ? '+' : ''}${h}</span>`).join('') || '<span style="font-size:0.7rem; color:gray">لا يوجد تاريخ</span>';
                 let actionHtml = '';
                 if (GAME_ENGINE.state.roundActive) {
                     if (isComplex) {
-                        // عرض جميع خيارات الكومبليكس مع إضافة صح للخيارات الملعوبة
-                        const optionsHtml = CONFIG.COMPLEX_OPTIONS.map(opt => {
-                            const isPlayed = p.usedComplexOptions.includes(opt.id);
-                            return `<option value="${opt.id}">${isPlayed ? opt.name + ' ✅' : opt.name}</option>`;
-                        }).join('');
-
-                        actionHtml = `<div style="display:flex; flex-direction:column; gap:8px; margin-top:10px;">
-                            <select id="k-select-${p.id}">${optionsHtml}</select>
-                            <div style="display:flex; gap:8px;">
-                                <input type="number" id="in-${p.id}" placeholder="العدد..." inputmode="numeric">
-                                <button class="btn-individual" onclick="GAME_ENGINE.addComplexScore(${p.id})">أضف</button>
-                            </div>
-                        </div>`;
-                    } else {
-                        actionHtml = `<input type="number" class="bulk-input" data-id="${p.id}" placeholder="${kingdomId === 'trix' ? 'الترتيب (±1-4)' : 'العدد...'}" inputmode="numeric" style="margin-top:10px; border-color:var(--primary-blue)">`;
-                    }
+                        const optionsHtml = CONFIG.COMPLEX_OPTIONS.map(opt => `<option value="${opt.id}">${p.usedComplexOptions.includes(opt.id) ? opt.name + ' ✅' : opt.name}</option>`).join('');
+                        actionHtml = `<div style="display:flex; flex-direction:column; gap:8px; margin-top:10px;"><select id="k-select-${p.id}">${optionsHtml}</select><div style="display:flex; gap:8px;"><input type="number" id="in-${p.id}" placeholder="العدد..." inputmode="numeric"><button class="btn-individual" onclick="GAME_ENGINE.addComplexScore(${p.id})">إضافة</button></div><span class="remaining-link" onclick="GAME_ENGINE.remainingCalculated(${p.id})">باقي الحساب (خصم مباشر)</span></div>`;
+                    } else actionHtml = `<input type="number" class="bulk-input" data-id="${p.id}" placeholder="${kingdomId === 'trix' ? 'الترتيب (±1-4)' : 'العدد...'}" inputmode="numeric" style="margin-top:10px; border-color:var(--primary-blue)">`;
                 }
                 card.innerHTML = `<div class="card-header"><span class="player-name-tag">${p.name}</span><span class="total-score ${p.score < 0 ? 'score-negative' : 'score-positive'}">${p.score}</span></div><div class="score-history">${historyHtml}</div>${actionHtml}`;
                 list.appendChild(card);
